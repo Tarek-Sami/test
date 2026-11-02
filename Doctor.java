@@ -53,7 +53,6 @@ public class Doctor implements Runnable {
                             + " begins treating "
                             + patient.getName() + ".");
 
-                    
                     // Simulate treatment time
                     Thread.sleep((int) (Math.random() * 5 + 1) * 1000);
 
@@ -66,10 +65,10 @@ public class Doctor implements Runnable {
 
                 } finally {
 
+                    treatmentRooms.releaseRoom();
+
                     System.out.println(name
                             + " released the treatment room.");
-
-                    treatmentRooms.releaseRoom();
                 }
 
                 System.out.println(name + " is now available.");
