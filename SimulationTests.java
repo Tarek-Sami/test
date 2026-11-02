@@ -4,7 +4,7 @@ import java.util.*;
 
 public class SimulationTests {
 
-    // صالة انتظار مراقبة للتحقق البرمجي الدقيق من أن سعة الصالة لا يتم تجاوزها أبداً
+    // صالة انتظار مراقبة للتحقق البرمجي الفعلي من أن سعة الصالة لا يتم تجاوزها أبداً
     static class MonitoredWaitingRoom extends WaitingRoom {
         private final int capacity;
         private int currentOccupancy = 0;
@@ -63,7 +63,7 @@ public class SimulationTests {
         }
     }
 
-    // غرف علاج مراقبة للتحقق البرمجي من أن عدد الغرف المشغولة لا يتجاوز 2 أبداً
+    // غرف علاج مراقبة للتحقق من أن عدد الغرف المشغولة في نفس اللحظة لا يتجاوز 2 أبداً
     static class MonitoredTreatmentRooms extends TreatmentRooms {
         private int currentOccupied = 0;
         private int maxOccupied = 0;
@@ -119,7 +119,7 @@ public class SimulationTests {
 
         public int timeoutCount;
         public int returnCount;
-        public boolean timeoutReturnedObserved; // يتحقق من أن كل مريض حدث له timeout تمت إعادته بالاسم
+        public boolean timeoutReturnedObserved; // يتحقق من أن نفس المريض الذي انتهت مهلته تمت إعادته
 
         public boolean threadsTerminated;
         public boolean noDeadlock;
@@ -129,7 +129,7 @@ public class SimulationTests {
             boolean base = allTreatedOnce && noPatientDisappeared && capacityNotExceeded
                     && maxTwoRoomsOccupied && threadsTerminated && noDeadlock;
 
-            // إذا حدثت حالات timeout، يجب التحقق من أن كل مريض تم إرجاعه بالاسم بنجاح
+            // عند حدوث timeout، يجب التأكد من أن كل مريض حدثت له مهلة تم إرجاعه بعينه بنجاح
             if (timeoutCount > 0) {
                 return base && timeoutReturnedObserved;
             }
@@ -144,7 +144,7 @@ public class SimulationTests {
         result.doctors = numDoctors;
         result.patients = numPatients;
 
-        // التقاط مخرجات الطباعة لتحليل الأحداث ومطابقة المرضى
+        // التقاط مخرجات الطباعة للتحقق من مطابقة أحداث المرضى بدقة
         PrintStream originalOut = System.out;
         ByteArrayOutputStream outContent = new ByteArrayOutputStream();
         List<String> eventLog = Collections.synchronizedList(new ArrayList<>());
@@ -187,14 +187,12 @@ public class SimulationTests {
         }
 
         boolean deadlockDetected = false;
-        boolean doctorsTerminatedCleanly = true;
-        boolean patientsTerminatedCleanly = true;
+        boolean allThreadsTerminatedCleanly = true;
 
         try {
-            // 1. انتظار انتهاء جميع المرضى من العلاج مع مهلة أمان للكشف عن أي deadlock
+            // 1. انتظار انتهاء جميع المرضى من العلاج مع مهلة لمنع التعليق
             for (int i = 0; i < numPatients; i++) {
-                // مهلة 30 ثانية لكل مريض
-                patientThreads[i].join(30000);
+                patientThreads[i].join(30000); // 30 ثانية لكل مريض
                 if (patientThreads[i].isAlive()) {
                     deadlockDetected = true;
                     result.failureReason = "Deadlock: Patient P" + (i + 1) + " thread never finished!";
@@ -205,7 +203,7 @@ public class SimulationTests {
             deadlockDetected = true;
             result.failureReason = "Test runner interrupted unexpectedly";
         } finally {
-            // 2. ضمان إيقاف جميع خيوط الأطباء والمرضى حتى في حال حدوث deadlock أو فشل
+            // 2. إيقاف جميع خيوط الأطباء والمرضى إجبارياً حتى في حال الفشل
             for (int i = 0; i < numDoctors; i++) {
                 if (doctorThreads[i] != null) {
                     doctorThreads[i].interrupt();
@@ -217,83 +215,104 @@ public class SimulationTests {
                 }
             }
 
-            // 3. انتظار إغلاق خيوط الأطباء النظيف
+            // 3. انتظار إغلاق خيوط الأطباء
             for (int i = 0; i < numDoctors; i++) {
                 if (doctorThreads[i] != null) {
                     try {
                         doctorThreads[i].join(5000);
-                        if (doctorThreads[i].isAlive()) {
-                            doctorsTerminatedCleanly = false;
-                            result.failureReason = "Doctor " + (i + 1) + " thread failed to terminate!";
-                        }
                     } catch (InterruptedException e) {
-                        doctorsTerminatedCleanly = false;
+                        // ignore
                     }
                 }
             }
 
-            // 4. التأكد من توقف جميع خيوط المرضى بالكامل
+            // 4. انتظار إغلاق خيوط المرضى
             for (int i = 0; i < numPatients; i++) {
                 if (patientThreads[i] != null) {
                     try {
                         patientThreads[i].join(2000);
-                        if (patientThreads[i].isAlive()) {
-                            patientsTerminatedCleanly = false;
-                        }
                     } catch (InterruptedException e) {
-                        patientsTerminatedCleanly = false;
+                        // ignore
                     }
+                }
+            }
+
+            // 5. التحقق الصارم: يجب أن تفشل التجربة إذا ظل أي Thread يعمل
+            for (int i = 0; i < numDoctors; i++) {
+                if (doctorThreads[i] != null && doctorThreads[i].isAlive()) {
+                    allThreadsTerminatedCleanly = false;
+                    result.failureReason = "Doctor " + (i + 1) + " thread is still alive after cleanup!";
+                }
+            }
+            for (int i = 0; i < numPatients; i++) {
+                if (patientThreads[i] != null && patientThreads[i].isAlive()) {
+                    allThreadsTerminatedCleanly = false;
+                    result.failureReason = "Patient P" + (i + 1) + " thread is still alive after cleanup!";
                 }
             }
         }
 
-        // استعادة مخرج الشاشة الأصلي
+        // استعادة مخرج الطباعة الأصلي
         System.setOut(originalOut);
 
         result.noDeadlock = !deadlockDetected;
-        result.threadsTerminated = !deadlockDetected && doctorsTerminatedCleanly && patientsTerminatedCleanly;
+        result.threadsTerminated = allThreadsTerminatedCleanly && !deadlockDetected;
 
-        // 5. التحقق الحقيقي من سعة صالة الانتظار وغرف العلاج
+        // 6. التحقق الفعلي من سعة صالة الانتظار وغرف العلاج
         result.capacityNotExceeded = !waitingRoom.isCapacityExceeded() && (waitingRoom.getMaxOccupancy() <= capacity);
         result.maxWaitingOccupancy = waitingRoom.getMaxOccupancy();
 
         result.maxTwoRoomsOccupied = !treatmentRooms.isRoomsExceeded() && (treatmentRooms.getMaxOccupied() <= 2);
         result.maxRoomsOccupied = treatmentRooms.getMaxOccupied();
 
-        // 6. تحليل سجل الأحداث والتحقق من إعادة المرضى بأسمائهم المحددة
-        Map<String, String> doctorCurrentPatient = new HashMap<>(); // اسم الطبيب -> اسم المريض الحالي
-        List<String> timedOutPatients = new ArrayList<>();          // المرضى الذين حدث لهم timeout
-        List<String> returnedPatients = new ArrayList<>();          // المرضى الذين تمت إعادتهم للصالة
+        // 7. التحقق من أن نفس المريض الذي انتهت مهلته هو الذي تمت إعادته للصالة
+        Map<String, String> doctorAssignedPatient = new HashMap<>(); // اسم الطبيب -> المريض الحالي معه
+        Map<String, String> doctorPendingReturn = new HashMap<>();   // اسم الطبيب -> المريض المطلوب إعادته
+        int timeouts = 0;
+        int successfulReturns = 0;
+        boolean allSamePatientsReturned = true;
 
         Map<String, Integer> treatedCount = new HashMap<>();
         Map<String, Integer> leftHospitalCount = new HashMap<>();
 
         for (String line : eventLog) {
-            // تتبع تعيين الطبيب للمريض: "Doctor 1 is assigned to P2."
+            // تتبع ارتباط الطبيب بالمريض
             if (line.contains(" is assigned to ")) {
                 String[] parts = line.split(" is assigned to ");
                 String doc = parts[0].trim();
                 String pat = parts[1].replace(".", "").trim();
-                doctorCurrentPatient.put(doc, pat);
+                doctorAssignedPatient.put(doc, pat);
             }
 
-            // تتبع انتهاء وقت محاولة حجز الغرفة: "Doctor 1 could not acquire a treatment room."
+            // تتبع انتهاء مهلة حجز الغرفة (Timeout)
             if (line.contains(" could not acquire a treatment room.")) {
                 String doc = line.split(" could not acquire a treatment room.")[0].trim();
-                String pat = doctorCurrentPatient.get(doc);
+                String pat = doctorAssignedPatient.get(doc);
+                timeouts++;
                 if (pat != null) {
-                    timedOutPatients.add(pat);
+                    doctorPendingReturn.put(doc, pat);
+                } else {
+                    allSamePatientsReturned = false;
                 }
             }
 
-            // تتبع إعادة المريض المحدد إلى الصالة: "Doctor 1 is sending P2 back to the waiting room."
+            // تتبع إعادة المريض للصالة والتأكد من أنه نفس المريض
             if (line.contains(" is sending ") && line.contains(" back to the waiting room.")) {
+                String doc = line.split(" is sending ")[0].trim();
                 String afterSending = line.split(" is sending ")[1];
                 String pat = afterSending.split(" back to the waiting room.")[0].trim();
-                returnedPatients.add(pat);
+
+                String expectedPat = doctorPendingReturn.remove(doc);
+                if (expectedPat != null && expectedPat.equals(pat)) {
+                    successfulReturns++;
+                } else {
+                    allSamePatientsReturned = false;
+                    result.failureReason = "Mismatch: " + doc + " timed out with "
+                            + expectedPat + " but returned " + pat;
+                }
             }
 
-            // تتبع انتهاء العلاج: "Doctor 1 finished treating P2."
+            // تتبع انتهاء العلاج
             if (line.contains("finished treating ")) {
                 String[] parts = line.split("finished treating ");
                 if (parts.length > 1) {
@@ -302,24 +321,22 @@ public class SimulationTests {
                 }
             }
 
-            // تتبع مغادرة المستشفى: "P2 left the hospital."
+            // تتبع مغادرة المستشفى
             if (line.contains("left the hospital.")) {
                 String pName = line.split("left the hospital")[0].trim();
                 leftHospitalCount.put(pName, leftHospitalCount.getOrDefault(pName, 0) + 1);
             }
         }
 
-        result.timeoutCount = timedOutPatients.size();
-        result.returnCount = returnedPatients.size();
+        if (!doctorPendingReturn.isEmpty()) {
+            allSamePatientsReturned = false;
+        }
 
-        // التحقق الدقيق: هل كل مريض حدث له timeout تمت إعادته بالاسم؟
-        boolean everyTimedOutReturned = (result.timeoutCount > 0)
-                && (result.timeoutCount == result.returnCount)
-                && timedOutPatients.equals(returnedPatients);
+        result.timeoutCount = timeouts;
+        result.returnCount = successfulReturns;
+        result.timeoutReturnedObserved = (timeouts > 0) && (timeouts == successfulReturns) && allSamePatientsReturned;
 
-        result.timeoutReturnedObserved = everyTimedOutReturned;
-
-        // 7. التحقق من أن كل مريض عولج بالضبط مرة واحدة وغادر المستشفى
+        // 8. التحقق من أن كل مريض عولج بالضبط مرة واحدة وغادر المستشفى بالضبط مرة واحدة
         boolean allTreatedOnce = true;
         for (int i = 1; i <= numPatients; i++) {
             String pName = "P" + i;
@@ -334,7 +351,7 @@ public class SimulationTests {
         }
 
         result.allTreatedOnce = allTreatedOnce;
-        result.noPatientDisappeared = (treatedCount.size() == numPatients);
+        result.noPatientDisappeared = (treatedCount.size() == numPatients && leftHospitalCount.size() == numPatients);
 
         return result;
     }
